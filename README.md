@@ -2,6 +2,10 @@
 
 Run checks against HTTPS and SMTP (STARTTLS) endpoints and expose metrics about their SSL certificates
 
+## Installation
+
+    $ go get -u github.com/chrj/prometheus-ssl-exporter
+
 ## Metrics
 
 ### Gauge: `ssl_certificate_days_left`
@@ -13,6 +17,8 @@ Labels:
 
 Examples:
 
+    # HELP ssl_certificate_days_left Number of days left on the certificate
+    # TYPE ssl_certificate_days_left gauge
     ssl_certificate_days_left{domain="smtp.gmail.com",type="smtp"} 48
     ssl_certificate_days_left{domain="www.google.com",type="http"} 48
     ssl_certificate_days_left{domain="www.technobabble.dk",type="http"} 36
@@ -28,7 +34,7 @@ Supply a configuration file path with `-config` (optionally, defaults to `/etc/s
 Supply a listen address with `-addr` (optionally, defaults to `:9203`), and configure a Prometheus job:
 
     - job_name: "ssl"
-      scrape_interval: "1h"
+      scrape_interval: "1m"
       static_configs:
         - targets:
             - "server:9203"

@@ -136,7 +136,7 @@ func (e *Exporter) collectHTTPDomain(domain string) {
 	cert := resp.TLS.PeerCertificates[0]
 
 	e.certificates.WithLabelValues("http", domain).Set(
-		float64(time.Until(cert.NotAfter) / 24 / time.Hour),
+		float64(time.Until(cert.NotAfter)/time.Hour) / 24,
 	)
 
 }
@@ -170,7 +170,7 @@ func (e *Exporter) collectSMTPDomain(domain string, port int) {
 	cert := state.PeerCertificates[0]
 
 	e.certificates.WithLabelValues("smtp", domain).Set(
-		float64(time.Until(cert.NotAfter) / 24 / time.Hour),
+		float64(time.Until(cert.NotAfter)/time.Hour) / 24,
 	)
 
 }
