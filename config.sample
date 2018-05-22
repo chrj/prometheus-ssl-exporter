@@ -1,0 +1,9 @@
+[[http_domains]]
+  domain = "www.google.com"
+
+[[http_domains]]
+  domain = "www.technobabble.dk"
+
+[[smtp_domains]]
+  domain = "smtp.gmail.com"
+  port = 587

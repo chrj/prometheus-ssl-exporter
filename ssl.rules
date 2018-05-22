@@ -1,0 +1,10 @@
+ALERT SSLCertificateNearExpiration
+  IF ssl_certificate_days_left < 40
+  FOR 1m
+  LABELS {
+    urgency = "immediate"
+  }
+  ANNOTATIONS {
+    title = "The certificate for {{$labels.domain}} ({{$labels.type}}) expires soon",
+    description = "The certificate for {{$labels.domain}} ({{$labels.type}}) expires in {{$value}} day(s)",
+  }
