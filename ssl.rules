@@ -1,5 +1,5 @@
 ALERT SSLCertificateNearExpiration
-  IF ssl_certificate_days_left < 40
+  IF ssl_certificate_days_left < 21
   FOR 1m
   LABELS {
     urgency = "immediate"
