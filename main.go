@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -18,8 +19,9 @@ import (
 
 var addr = flag.String("listen-address", ":9203", "Prometheus metrics port")
 var conf = flag.String("config", "/etc/ssl/checks", "Configuration file")
+var timeout = flag.Duration("timeout", 10*time.Second, "Timeout for network operations")
 
-var httpClient = &http.Client{}
+var httpClient *http.Client
 
 type HTTPDomain struct {
 	Domain string
@@ -163,7 +165,18 @@ func (e *Exporter) collectSMTPDomain(domain string, port int) {
 
 	target := fmt.Sprintf("%s:%d", domain, port)
 
-	c, err := smtp.Dial(target)
+	start := time.Now()
+
+	conn, err := net.DialTimeout("tcp", target, *timeout)
+	if err != nil {
+		log.Printf("error connecting to smtp server %v: %v", target, err)
+		e.status.WithLabelValues("smtp", domain).Set(0)
+		return
+	}
+
+	conn.SetDeadline(start.Add(*timeout))
+
+	c, err := smtp.NewClient(conn, domain)
 	if err != nil {
 		log.Printf("error collecting %v: %v", target, err)
 		e.status.WithLabelValues("smtp", domain).Set(0)
@@ -201,6 +214,10 @@ func (e *Exporter) collectSMTPDomain(domain string, port int) {
 func main() {
 
 	flag.Parse()
+
+	httpClient = &http.Client{
+		Timeout: *timeout,
+	}
 
 	f, err := os.Open(*conf)
 	if err != nil {

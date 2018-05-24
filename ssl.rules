@@ -8,3 +8,14 @@ ALERT SSLCertificateNearExpiration
     title = "The certificate for {{$labels.domain}} ({{$labels.type}}) expires soon",
     description = "The certificate for {{$labels.domain}} ({{$labels.type}}) expires in {{$value}} day(s)",
   }
+
+ALERT SSLEndpointDown
+  IF ssl_endpoint_up == 0
+  FOR 1m
+  LABELS {
+    urgency = "immediate"
+  }
+  ANNOTATIONS {
+    title = "The SSL endpoint for {{$labels.domain}} ({{$labels.type}}) is not responding",
+    description = "The SSL endpoint for {{$labels.domain}} ({{$labels.type}}) is not responding",
+  }
