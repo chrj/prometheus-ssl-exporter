@@ -35,6 +35,7 @@ type Exporter struct {
 	SMTPDomains []SMTPDomain
 
 	certificates *prometheus.GaugeVec
+	status       *prometheus.GaugeVec
 }
 
 func NewSSLExporter() *Exporter {
@@ -51,11 +52,24 @@ func NewSSLExporter() *Exporter {
 				"domain",
 			},
 		),
+		status: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "ssl",
+				Subsystem: "endpoint",
+				Name:      "up",
+				Help:      "Was the last SSL poll successful",
+			},
+			[]string{
+				"type",
+				"domain",
+			},
+		),
 	}
 }
 
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.certificates.Describe(ch)
+	e.status.Describe(ch)
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
@@ -117,6 +131,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	top.Wait()
 
 	e.certificates.Collect(ch)
+	e.status.Collect(ch)
 
 }
 
@@ -128,6 +143,7 @@ func (e *Exporter) collectHTTPDomain(domain string) {
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("error collecting %v: %v", domain, err)
+		e.status.WithLabelValues("http", domain).Set(0)
 		return
 	}
 
@@ -139,6 +155,8 @@ func (e *Exporter) collectHTTPDomain(domain string) {
 		float64(time.Until(cert.NotAfter)/time.Hour) / 24,
 	)
 
+	e.status.WithLabelValues("http", domain).Set(1)
+
 }
 
 func (e *Exporter) collectSMTPDomain(domain string, port int) {
@@ -148,6 +166,7 @@ func (e *Exporter) collectSMTPDomain(domain string, port int) {
 	c, err := smtp.Dial(target)
 	if err != nil {
 		log.Printf("error collecting %v: %v", target, err)
+		e.status.WithLabelValues("smtp", domain).Set(0)
 		return
 	}
 
@@ -158,12 +177,14 @@ func (e *Exporter) collectSMTPDomain(domain string, port int) {
 	err = c.StartTLS(tlsconf)
 	if err != nil {
 		log.Printf("STARTTLS handshake failed for %v: %v", target, err)
+		e.status.WithLabelValues("smtp", domain).Set(0)
 		return
 	}
 
 	state, ok := c.TLSConnectionState()
 	if !ok {
 		log.Printf("couldn't get TLS state from %v", target)
+		e.status.WithLabelValues("smtp", domain).Set(0)
 		return
 	}
 
@@ -172,6 +193,8 @@ func (e *Exporter) collectSMTPDomain(domain string, port int) {
 	e.certificates.WithLabelValues("smtp", domain).Set(
 		float64(time.Until(cert.NotAfter)/time.Hour) / 24,
 	)
+
+	e.status.WithLabelValues("smtp", domain).Set(1)
 
 }
 
