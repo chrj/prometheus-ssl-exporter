@@ -19,7 +19,7 @@ import (
 
 var addr = flag.String("listen-address", ":9203", "Prometheus metrics port")
 var conf = flag.String("config", "/etc/ssl/checks", "Configuration file")
-var timeout = flag.Duration("timeout", 10*time.Second, "Timeout for network operations")
+var timeout = flag.Duration("timeout", 8*time.Second, "Timeout for network operations")
 
 var httpClient *http.Client
 
