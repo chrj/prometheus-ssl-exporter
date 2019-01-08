@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -144,12 +146,18 @@ func (e *Exporter) collectHTTPDomain(domain string) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Printf("error collecting %v: %v", domain, err)
+		log.Printf("error connecting to %v: %v", domain, err)
 		e.status.WithLabelValues("http", domain).Set(0)
 		return
 	}
 
-	resp.Body.Close()
+	defer resp.Body.Close()
+
+	if _, err := io.Copy(ioutil.Discard, resp.Body); err != nil {
+		log.Printf("error reading response from %v: %v", domain, err)
+		e.status.WithLabelValues("http", domain).Set(0)
+		return
+	}
 
 	cert := resp.TLS.PeerCertificates[0]
 
