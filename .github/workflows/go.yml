@@ -1,4 +1,4 @@
-name: prometheus-dnssec-exporter
+name: prometheus-ssl-exporter
 
 on:
   push:
