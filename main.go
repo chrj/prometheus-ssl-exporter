@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"io"
@@ -17,11 +18,16 @@ import (
 	"github.com/naoina/toml"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/spf13/viper"
+	"gopkg.in/yaml.v2"
 )
 
-var addr = flag.String("listen-address", ":9203", "Prometheus metrics port")
-var conf = flag.String("config", "/etc/ssl/checks", "Configuration file")
-var timeout = flag.Duration("timeout", 8*time.Second, "Timeout for network operations")
+var (
+	addr           = flag.String("listen-address", ":9203", "Prometheus metrics port")
+	conf           = flag.String("config", "/etc/ssl/checks", "Configuration file")
+	exporterConfig = flag.String("exporter-config", "exporter.yml", "Exporter configuration file")
+	timeout        = flag.Duration("timeout", 8*time.Second, "Timeout for network operations")
+)
 
 var httpClient *http.Client
 
@@ -34,12 +40,51 @@ type SMTPDomain struct {
 	Port   int
 }
 
+// custom TLS config for the exporter itself
+type TLSConfigServer struct {
+	Server struct {
+		CertFile string `yaml:"cert_file"`
+		KeyFile  string `yaml:"key_file"`
+	} `yaml:"tls_server_config"`
+}
+
+// config for the exporter itself
+type Config struct {
+	ListenAddr      string            `yaml:"port"`
+	CAs             map[string]string `yaml:"cas"`
+	SkipTLSVerify   bool              `yaml:"skip_tls_verify"`
+	TlsConfigServer string            `yaml:"tls_config_server"`
+}
+
+func readConfig(path string) (*Config, error) {
+	viper.SetConfigType("yaml")
+
+	file, err := os.Open(path)
+	defer file.Close()
+
+	if err != nil {
+		return nil, err
+	}
+
+	if err := viper.ReadConfig(file); err != nil {
+		return nil, err
+	}
+
+	return &Config{
+		ListenAddr:      viper.GetString("listen_addr"),
+		CAs:             viper.GetStringMapString("cas"),
+		SkipTLSVerify:   viper.GetBool("skip_tls_verify"),
+		TlsConfigServer: viper.GetString("tls_config_server"),
+	}, nil
+}
+
 type Exporter struct {
 	HTTPDomains []HTTPDomain
 	SMTPDomains []SMTPDomain
 
 	certificates *prometheus.GaugeVec
 	status       *prometheus.GaugeVec
+	config       *Config
 }
 
 func NewSSLExporter() *Exporter {
@@ -144,6 +189,13 @@ func (e *Exporter) collectHTTPDomain(domain string) {
 	req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s/", domain), nil)
 	req.Header.Set("User-Agent", "prometheus-ssl-exporter/0.1 (SSL monitoring)")
 
+	tlsConfig, err := prepareTlsConfig(e.config, domain)
+	if err != nil {
+		log.Printf("error preparing TLS config for %v: %v", domain, err)
+	}
+	httpClient.Transport = &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("error connecting to %v: %v", domain, err)
@@ -219,12 +271,38 @@ func (e *Exporter) collectSMTPDomain(domain string, port int) {
 
 }
 
+func prepareTlsConfig(config *Config, domain string) (*tls.Config, error) {
+	var (
+		caCert     []byte
+		caCertPool *x509.CertPool = nil
+	)
+	if !config.SkipTLSVerify {
+		var err error
+		caCert, err = os.ReadFile(config.CAs[domain])
+		if err != nil {
+			fmt.Printf("no valid custom CA certificate provided for domain %s will continue without custom CA\n", domain)
+			goto ret
+		}
+		caCertPool = x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+	}
+ret:
+	return &tls.Config{
+		InsecureSkipVerify: config.SkipTLSVerify,
+		RootCAs:            caCertPool,
+	}, nil
+}
+
 func main() {
 
 	flag.Parse()
 
 	httpClient = &http.Client{
 		Timeout: *timeout,
+	}
+	config, err := readConfig(*exporterConfig)
+	if err != nil {
+		log.Fatalf("couldn't read configuration file: %v", err)
 	}
 
 	f, err := os.Open(*conf)
@@ -233,7 +311,7 @@ func main() {
 	}
 
 	exporter := NewSSLExporter()
-
+	exporter.config = config
 	if err := toml.NewDecoder(f).Decode(exporter); err != nil {
 		log.Fatalf("couldn't parse configuration file: %v", err)
 	}
@@ -242,6 +320,23 @@ func main() {
 
 	http.Handle("/metrics", promhttp.Handler())
 
-	log.Fatal(http.ListenAndServe(*addr, nil))
+	if config.ListenAddr != "" {
+		*addr = config.ListenAddr
+	}
 
+	if config.TlsConfigServer != "" {
+		log.Printf("using TLS config %s", config.TlsConfigServer)
+		file, err := os.ReadFile(config.TlsConfigServer)
+		if err != nil {
+			log.Fatalf("couldn't read TLS config file: %v", err)
+		}
+		var tlsConfig TLSConfigServer
+		if err := yaml.Unmarshal(file, &tlsConfig); err != nil {
+			log.Fatalf("couldn't parse TLS config file: %v", err)
+		}
+		log.Printf("starting exporter with TLS on %s", *addr)
+		log.Fatal(http.ListenAndServeTLS(*addr, tlsConfig.Server.CertFile, tlsConfig.Server.KeyFile, nil))
+	}
+	log.Printf("starting exporter on %s", *addr)
+	log.Fatal(http.ListenAndServe(*addr, nil))
 }
