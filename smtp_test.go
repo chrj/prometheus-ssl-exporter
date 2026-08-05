@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,11 +14,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/chrj/smtpd/v2"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -117,107 +116,32 @@ func startSMTPServer(t *testing.T, cert tls.Certificate) int {
 		t.Fatalf("parse the port: %v", err)
 	}
 
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+	// The server offers STARTTLS because TLSConfig is set.
+	server := &smtpd.Server{
+		Hostname: "localhost",
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		},
+		Handler: func(ctx context.Context, peer smtpd.Peer, env *smtpd.Envelope) (context.Context, error) {
+			return ctx, nil
+		},
 	}
 
-	var wg sync.WaitGroup
-	done := make(chan struct{})
-
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				select {
-				case <-done:
-					return
-				default:
-					return
-				}
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				serveSMTP(conn, tlsConfig)
-			}()
-		}
+		// Serve returns when Shutdown closes the listener.
+		_ = server.Serve(listener)
 	}()
 
 	t.Cleanup(func() {
-		close(done)
-		listener.Close()
-		wg.Wait()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			t.Errorf("shut the SMTP server down: %v", err)
+		}
 	})
 
 	return port
-}
-
-// serveSMTP answers the commands that the probe sends. It offers STARTTLS
-// and then continues the session inside TLS.
-func serveSMTP(conn net.Conn, tlsConfig *tls.Config) {
-	defer conn.Close()
-
-	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return
-	}
-
-	reader := bufio.NewReader(conn)
-
-	write := func(line string) bool {
-		_, err := conn.Write([]byte(line + "\r\n"))
-		return err == nil
-	}
-
-	if !write("220 localhost ESMTP test") {
-		return
-	}
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return
-		}
-
-		command := strings.ToUpper(strings.TrimSpace(line))
-
-		switch {
-		case strings.HasPrefix(command, "EHLO"):
-			if !write("250-localhost") || !write("250 STARTTLS") {
-				return
-			}
-
-		case strings.HasPrefix(command, "HELO"):
-			if !write("250 localhost") {
-				return
-			}
-
-		case command == "STARTTLS":
-			if !write("220 ready to start TLS") {
-				return
-			}
-
-			tlsConn := tls.Server(conn, tlsConfig)
-			if err := tlsConn.Handshake(); err != nil {
-				return
-			}
-
-			defer tlsConn.Close()
-			conn = tlsConn
-			reader = bufio.NewReader(tlsConn)
-
-		case command == "QUIT":
-			write("221 bye")
-			return
-
-		default:
-			if !write("250 ok") {
-				return
-			}
-		}
-	}
 }
 
 // gatherSMTP runs one scrape over a single SMTP target and returns the value
