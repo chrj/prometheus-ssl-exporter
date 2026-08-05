@@ -60,12 +60,14 @@ The file holds the targets and the options below. The exporter reads the CA
 files at startup, so a file that it cannot read stops the exporter with a
 message that names the target.
 
-### Per-target options for `[[http_domains]]`
+### Per-target options for `[[http_domains]]` and `[[smtp_domains]]`
 
 * `ca_file`: a PEM file with the certificate authority that signed the
   certificate of this target. An empty value selects the system pool.
 * `insecure_skip_verify`: set it to `true` to stop the certificate checks
   for this target. The probe still reports the expiry.
+
+For an SMTP target, these options apply to the STARTTLS session.
 
 ### `[tls_server]`
 

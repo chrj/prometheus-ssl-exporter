@@ -68,6 +68,11 @@ func TestLoadConfig(t *testing.T) {
   domain = "smtp.example.com"
   port = 587
 
+[[smtp_domains]]
+  domain = "mail.example.com"
+  port = 25
+  insecure_skip_verify = true
+
 [tls_server]
   cert_file = "/etc/ssl/exporter.pem"
   key_file = "/etc/ssl/exporter.key"
@@ -91,14 +96,20 @@ func TestLoadConfig(t *testing.T) {
 		t.Errorf("http_domains[1].insecure_skip_verify: got %v, want true", got)
 	}
 
-	if len(config.SMTPDomains) != 1 {
-		t.Fatalf("smtp_domains: got %d, want 1", len(config.SMTPDomains))
+	if len(config.SMTPDomains) != 2 {
+		t.Fatalf("smtp_domains: got %d, want 2", len(config.SMTPDomains))
 	}
 	if got := config.SMTPDomains[0].Domain; got != "smtp.example.com" {
 		t.Errorf("smtp_domains[0].domain: got %q, want %q", got, "smtp.example.com")
 	}
 	if got := config.SMTPDomains[0].Port; got != 587 {
 		t.Errorf("smtp_domains[0].port: got %d, want 587", got)
+	}
+	if got := config.SMTPDomains[0].InsecureSkipVerify; got {
+		t.Errorf("smtp_domains[0].insecure_skip_verify: got %v, want false", got)
+	}
+	if got := config.SMTPDomains[1].InsecureSkipVerify; !got {
+		t.Errorf("smtp_domains[1].insecure_skip_verify: got %v, want true", got)
 	}
 
 	if got := config.ServerTLS.CertFile; got != "/etc/ssl/exporter.pem" {
@@ -209,6 +220,17 @@ func TestConfigValidate(t *testing.T) {
 			config: Config{
 				HTTPDomains: []HTTPDomain{{
 					Domain: "internal.example.com",
+					CAFile: "/does/not/exist.pem",
+				}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "SMTP CA file that does not exist",
+			config: Config{
+				SMTPDomains: []SMTPDomain{{
+					Domain: "mail.example.com",
+					Port:   587,
 					CAFile: "/does/not/exist.pem",
 				}},
 			},

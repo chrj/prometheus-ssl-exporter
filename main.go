@@ -32,9 +32,16 @@ type httpTarget struct {
 	client *http.Client
 }
 
+// smtpTarget pairs a target with the TLS settings for its STARTTLS session.
+type smtpTarget struct {
+	domain string
+	port   int
+	tls    *tls.Config
+}
+
 type Exporter struct {
 	httpTargets []httpTarget
-	smtpTargets []SMTPDomain
+	smtpTargets []smtpTarget
 
 	certificates *prometheus.GaugeVec
 	status       *prometheus.GaugeVec
@@ -71,7 +78,17 @@ func NewSSLExporter(config *Config, timeout time.Duration) (*Exporter, error) {
 		})
 	}
 
-	exporter.smtpTargets = config.SMTPDomains
+	for _, target := range config.SMTPDomains {
+		tlsConfig, err := TLSConfig(target.Domain, target.CAFile, target.InsecureSkipVerify)
+		if err != nil {
+			return nil, fmt.Errorf("TLS settings for %s: %w", target.Domain, err)
+		}
+		exporter.smtpTargets = append(exporter.smtpTargets, smtpTarget{
+			domain: target.Domain,
+			port:   target.Port,
+			tls:    tlsConfig,
+		})
+	}
 
 	return exporter, nil
 }
@@ -210,11 +227,11 @@ func (e *Exporter) collectHTTPDomain(target httpTarget) {
 
 }
 
-func (e *Exporter) collectSMTPDomain(smtpTarget SMTPDomain) {
+func (e *Exporter) collectSMTPDomain(smtpTarget smtpTarget) {
 
-	domain := smtpTarget.Domain
+	domain := smtpTarget.domain
 
-	target := net.JoinHostPort(domain, strconv.Itoa(smtpTarget.Port))
+	target := net.JoinHostPort(domain, strconv.Itoa(smtpTarget.port))
 
 	start := time.Now()
 
@@ -224,6 +241,10 @@ func (e *Exporter) collectSMTPDomain(smtpTarget SMTPDomain) {
 		e.status.WithLabelValues("smtp", domain).Set(0)
 		return
 	}
+
+	// Close the connection on every path. smtp.NewClient takes it over only
+	// when it succeeds, and Quit does not run when it fails.
+	defer conn.Close()
 
 	conn.SetDeadline(start.Add(*timeout))
 
@@ -236,9 +257,7 @@ func (e *Exporter) collectSMTPDomain(smtpTarget SMTPDomain) {
 
 	defer c.Quit()
 
-	tlsconf := &tls.Config{ServerName: domain}
-
-	err = c.StartTLS(tlsconf)
+	err = c.StartTLS(smtpTarget.tls)
 	if err != nil {
 		log.Printf("STARTTLS handshake failed for %v: %v", target, err)
 		e.status.WithLabelValues("smtp", domain).Set(0)
