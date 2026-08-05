@@ -1,10 +1,11 @@
 name: prometheus-ssl-exporter
 
 on:
+  # Only master runs on push. A branch listed here that also has a pull
+  # request runs the same commit twice, once for each event.
   push:
     branches:
       - master
-      - chrj/revive-ssl-exporter
   pull_request:
 
 jobs:
