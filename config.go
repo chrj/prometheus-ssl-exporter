@@ -27,12 +27,17 @@ type HTTPDomain struct {
 }
 
 // SMTPDomain is one SMTP target that the exporter reaches with STARTTLS.
-//
-// The SMTP probe always uses the system certificate pool. It gets the
-// ca_file and insecure_skip_verify options of HTTPDomain in a later change.
 type SMTPDomain struct {
 	Domain string `toml:"domain"`
 	Port   int    `toml:"port"`
+
+	// CAFile is a PEM file with the certificate authority that signed the
+	// certificate of this target. An empty value selects the system pool.
+	CAFile string `toml:"ca_file"`
+
+	// InsecureSkipVerify stops the certificate checks for this target. The
+	// probe then reports the expiry of a certificate that it cannot trust.
+	InsecureSkipVerify bool `toml:"insecure_skip_verify"`
 }
 
 // ServerTLS turns on TLS for the metrics listener. Give both files or
@@ -92,6 +97,9 @@ func (c *Config) Validate() error {
 		if target.Port < 1 || target.Port > 65535 {
 			return fmt.Errorf("smtp_domains[%d] %q: port %d is outside the range 1-65535",
 				i, target.Domain, target.Port)
+		}
+		if _, err := TLSConfig(target.Domain, target.CAFile, target.InsecureSkipVerify); err != nil {
+			return fmt.Errorf("smtp_domains[%d] %q: %w", i, target.Domain, err)
 		}
 	}
 

@@ -3,6 +3,7 @@ module github.com/chrj/prometheus-ssl-exporter
 go 1.26
 
 require (
+	github.com/chrj/smtpd/v2 v2.1.2
 	github.com/naoina/toml v0.1.1
 	github.com/prometheus/client_golang v1.17.0
 )

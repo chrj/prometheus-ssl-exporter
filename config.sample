@@ -25,6 +25,12 @@
   domain = "smtp.gmail.com"
   port = 587
 
+# An SMTP target takes the same certificate options as an HTTPS target.
+# [[smtp_domains]]
+#   domain = "mail.example.com"
+#   port = 587
+#   ca_file = "/etc/ssl/certs/internal-ca.pem"
+
 # Serve the metrics endpoint with TLS. Give both files or neither.
 # [tls_server]
 #   cert_file = "/etc/ssl/exporter.pem"
