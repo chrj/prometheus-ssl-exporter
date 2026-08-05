@@ -1,0 +1,30 @@
+version: 2
+
+updates:
+  # Workflows pin actions to commit SHAs; dependabot reads the trailing
+  # "# v1.2.3" comment to know which version a SHA represents.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: fix
+      include: scope
+    groups:
+      go-deps:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

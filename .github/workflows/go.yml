@@ -2,33 +2,58 @@ name: prometheus-ssl-exporter
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
+      - chrj/revive-ssl-exporter
   pull_request:
-    branches: [ master ]
-  schedule:
-    - cron: '12 0 * * *'
 
 jobs:
 
+  # "Build and Test" is the required status check on master. A new name here
+  # needs a matching change to the branch protection rule.
   build:
     name: Build and Test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
 
-    - name: Set up Go 1.x
-      uses: actions/setup-go@v2
-      with:
-        go-version: ^1.13
-      id: go
+      - name: Build
+        run: go build -v ./...
 
-    - name: Check out the code
-      uses: actions/checkout@v2
+      - name: Test
+        run: go test -race ./...
 
-    - name: Get dependencies
-      run: go get -v -t -d ./...
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
 
-    - name: Build
-      run: go build -v .
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files need formatting:"
+            echo "$unformatted"
+            exit 1
+          fi
 
-    - name: Test
-      run: go test -v .
+      - name: Check go mod tidy
+        run: |
+          go mod tidy -v
+          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
+            echo "go.mod or go.sum is not tidy. Please run 'go mod tidy' and commit the changes."
+            git diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
