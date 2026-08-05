@@ -1,0 +1,5 @@
+listen_addr: ":9204"
+tls_config_server: "/path/to/tls-config.yml"
+cas: 
+  "www.example.com": "/path/to/custom/CA.crt"
+skip_tls_verify: false
