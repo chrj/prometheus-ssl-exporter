@@ -24,16 +24,59 @@ var (
 	timeout = flag.Duration("timeout", 8*time.Second, "Timeout for network operations")
 )
 
-var httpClient *http.Client
+// httpTarget pairs a target with the client that probes it. Each target gets
+// its own client, because each one can have a different certificate
+// authority.
+type httpTarget struct {
+	domain string
+	client *http.Client
+}
 
 type Exporter struct {
-	config *Config
+	httpTargets []httpTarget
+	smtpTargets []SMTPDomain
 
 	certificates *prometheus.GaugeVec
 	status       *prometheus.GaugeVec
 }
 
-func NewSSLExporter() *Exporter {
+// newHTTPClient builds the client for one target. The TLS settings go in the
+// transport of the client, so no probe writes to shared state.
+func newHTTPClient(target HTTPDomain, timeout time.Duration) (*http.Client, error) {
+	tlsConfig, err := TLSConfig(target.Domain, target.CAFile, target.InsecureSkipVerify)
+	if err != nil {
+		return nil, fmt.Errorf("TLS settings for %s: %w", target.Domain, err)
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig
+
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}, nil
+}
+
+func NewSSLExporter(config *Config, timeout time.Duration) (*Exporter, error) {
+	exporter := newExporter()
+
+	for _, target := range config.HTTPDomains {
+		client, err := newHTTPClient(target, timeout)
+		if err != nil {
+			return nil, err
+		}
+		exporter.httpTargets = append(exporter.httpTargets, httpTarget{
+			domain: target.Domain,
+			client: client,
+		})
+	}
+
+	exporter.smtpTargets = config.SMTPDomains
+
+	return exporter, nil
+}
+
+func newExporter() *Exporter {
 	return &Exporter{
 		certificates: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -79,9 +122,9 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 		var wg sync.WaitGroup
 
-		wg.Add(len(e.config.HTTPDomains))
+		wg.Add(len(e.httpTargets))
 
-		for _, target := range e.config.HTTPDomains {
+		for _, target := range e.httpTargets {
 
 			target := target
 
@@ -104,9 +147,9 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 		var wg sync.WaitGroup
 
-		wg.Add(len(e.config.SMTPDomains))
+		wg.Add(len(e.smtpTargets))
 
-		for _, target := range e.config.SMTPDomains {
+		for _, target := range e.smtpTargets {
 
 			target := target
 
@@ -130,28 +173,19 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 }
 
-func (e *Exporter) collectHTTPDomain(target HTTPDomain) {
+func (e *Exporter) collectHTTPDomain(target httpTarget) {
 
-	domain := target.Domain
+	domain := target.domain
 
-	req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s/", domain), nil)
-	req.Header.Set("User-Agent", "prometheus-ssl-exporter/0.1 (SSL monitoring)")
-
-	tlsConfig, err := TLSConfig(domain, target.CAFile, target.InsecureSkipVerify)
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/", domain), nil)
 	if err != nil {
-		log.Printf("error preparing TLS config for %v: %v", domain, err)
+		log.Printf("error building the request for %v: %v", domain, err)
 		e.status.WithLabelValues("http", domain).Set(0)
 		return
 	}
+	req.Header.Set("User-Agent", "prometheus-ssl-exporter/0.1 (SSL monitoring)")
 
-	// TODO: this writes to the shared client on every probe, which is a data
-	// race between the goroutines of one scrape. A later commit gives each
-	// target its own client.
-	httpClient.Transport = &http.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-
-	resp, err := httpClient.Do(req)
+	resp, err := target.client.Do(req)
 	if err != nil {
 		log.Printf("error connecting to %v: %v", domain, err)
 		e.status.WithLabelValues("http", domain).Set(0)
@@ -232,17 +266,15 @@ func main() {
 
 	flag.Parse()
 
-	httpClient = &http.Client{
-		Timeout: *timeout,
-	}
-
 	config, err := LoadConfig(*conf)
 	if err != nil {
 		log.Fatalf("couldn't load the configuration: %v", err)
 	}
 
-	exporter := NewSSLExporter()
-	exporter.config = config
+	exporter, err := NewSSLExporter(config, *timeout)
+	if err != nil {
+		log.Fatalf("couldn't build the exporter: %v", err)
+	}
 
 	prometheus.MustRegister(exporter)
 
