@@ -56,6 +56,22 @@ Supply a configuration file path with `-config` (optionally, defaults to `/etc/s
 
 [Sample configuration file](config.sample)
 
+The file holds the targets and the options below. The exporter reads the CA
+files at startup, so a file that it cannot read stops the exporter with a
+message that names the target.
+
+### Per-target options for `[[http_domains]]`
+
+* `ca_file`: a PEM file with the certificate authority that signed the
+  certificate of this target. An empty value selects the system pool.
+* `insecure_skip_verify`: set it to `true` to stop the certificate checks
+  for this target. The probe still reports the expiry.
+
+### `[tls_server]`
+
+Serve the metrics endpoint with TLS. Give `cert_file` and `key_file`
+together, or give neither.
+
 ## Prometheus target
 
 Supply a listen address with `-addr` (optionally, defaults to `:9203`), and configure a Prometheus job:
