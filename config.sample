@@ -1,9 +1,31 @@
+# Targets that the exporter reaches over HTTPS.
+
 [[http_domains]]
   domain = "www.google.com"
 
 [[http_domains]]
   domain = "www.technobabble.dk"
 
+# A target with a private certificate authority. Give the PEM file that
+# holds the authority. The exporter stops at startup if it cannot read
+# that file.
+# [[http_domains]]
+#   domain = "internal.example.com"
+#   ca_file = "/etc/ssl/certs/internal-ca.pem"
+
+# A target with a certificate that no authority signed. The probe reports
+# the expiry, but it does not check the certificate.
+# [[http_domains]]
+#   domain = "legacy.example.com"
+#   insecure_skip_verify = true
+
+# Targets that the exporter reaches with SMTP and STARTTLS.
+
 [[smtp_domains]]
   domain = "smtp.gmail.com"
   port = 587
+
+# Serve the metrics endpoint with TLS. Give both files or neither.
+# [tls_server]
+#   cert_file = "/etc/ssl/exporter.pem"
+#   key_file = "/etc/ssl/exporter.key"
