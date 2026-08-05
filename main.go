@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -171,7 +172,7 @@ func (e *Exporter) collectHTTPDomain(domain string) {
 
 func (e *Exporter) collectSMTPDomain(domain string, port int) {
 
-	target := fmt.Sprintf("%s:%d", domain, port)
+	target := net.JoinHostPort(domain, strconv.Itoa(port))
 
 	start := time.Now()
 
