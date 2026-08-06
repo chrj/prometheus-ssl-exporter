@@ -5,9 +5,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 
-	"github.com/naoina/toml"
+	"github.com/BurntSushi/toml"
 )
 
 // errNoCertificate reports a CA file that holds no PEM certificate.
@@ -61,17 +63,24 @@ type Config struct {
 
 // LoadConfig reads and checks the configuration file at path.
 func LoadConfig(path string) (*Config, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open the configuration file %s: %w", path, err)
-	}
-	// The file is open for reading only, so a close error says nothing that
-	// the caller can act on.
-	defer func() { _ = f.Close() }()
-
 	var config Config
-	if err := toml.NewDecoder(f).Decode(&config); err != nil {
-		return nil, fmt.Errorf("parse the configuration file %s: %w", path, err)
+
+	meta, err := toml.DecodeFile(path, &config)
+	if err != nil {
+		return nil, fmt.Errorf("read the configuration file %s: %w", path, err)
+	}
+
+	// A key that no field matches is almost always a spelling mistake. The
+	// exporter keeps running with the default for that key, so say which key
+	// it was. A wrong "ca_file" would otherwise send the probe to the system
+	// pool without a word.
+	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, key := range undecoded {
+			keys = append(keys, key.String())
+		}
+		log.Printf("configuration file %s: no setting matches these keys: %s",
+			path, strings.Join(keys, ", "))
 	}
 
 	if err := config.Validate(); err != nil {
