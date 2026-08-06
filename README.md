@@ -18,37 +18,57 @@ Run checks against HTTPS and SMTP (STARTTLS) endpoints and expose metrics about 
 
 ## Metrics
 
-### Gauge: `ssl_certificate_days_left`
+Every metric carries the labels `domain` and `type`. The `type` label is
+`http` or `smtp`.
 
-Number of days left on the certificate.
+A probe that fails reports `ssl_endpoint_up 0` and no certificate metrics.
+The certificate metrics of that target leave the output until a probe
+succeeds again.
 
-Labels:
+### Gauge: `ssl_cert_not_after`
 
-* `domain`
-* `type`
+End of the validity of the certificate, as seconds since the epoch.
+
+### Gauge: `ssl_cert_not_before`
+
+Start of the validity of the certificate, as seconds since the epoch.
 
 ### Gauge: `ssl_endpoint_up`
 
 Was the last SSL poll successful.
 
-Labels:
+### Gauge: `ssl_certificate_days_left` (deprecated)
 
-* `domain`
-* `type`
+Number of days left on the certificate.
 
-### Examples
+This metric stays for the installations that already use it, and it goes
+away in a later major version. Use `ssl_cert_not_after` instead:
 
-    # HELP ssl_certificate_days_left Number of days left on the certificate
+    (ssl_cert_not_after - time()) / 86400
+
+The two give the same number. `ssl_cert_not_after` is a fixed point in
+time, so a graph of it does not move while the certificate stays the
+same, and a recording rule over it does not need a fresh scrape to stay
+correct.
+
+### Example
+
+    # HELP ssl_cert_not_after End of the validity of the certificate, as seconds since the epoch
+    # TYPE ssl_cert_not_after gauge
+    ssl_cert_not_after{domain="smtp.gmail.com",type="smtp"} 1.7869248e+09
+    ssl_cert_not_after{domain="www.google.com",type="http"} 1.7869248e+09
+    # HELP ssl_cert_not_before Start of the validity of the certificate, as seconds since the epoch
+    # TYPE ssl_cert_not_before gauge
+    ssl_cert_not_before{domain="smtp.gmail.com",type="smtp"} 1.7791488e+09
+    ssl_cert_not_before{domain="www.google.com",type="http"} 1.7791488e+09
+    # HELP ssl_certificate_days_left DEPRECATED: use (ssl_cert_not_after - time()) / 86400. Number of days left on the certificate
     # TYPE ssl_certificate_days_left gauge
-    ssl_certificate_days_left{domain="smtp.gmail.com",type="smtp"} 48
-    ssl_certificate_days_left{domain="www.google.com",type="http"} 48
-    ssl_certificate_days_left{domain="www.technobabble.dk",type="http"} 36
+    ssl_certificate_days_left{domain="smtp.gmail.com",type="smtp"} 48.2
+    ssl_certificate_days_left{domain="www.google.com",type="http"} 48.2
     # HELP ssl_endpoint_up Was the last SSL poll successful
     # TYPE ssl_endpoint_up gauge
     ssl_endpoint_up{domain="smtp.gmail.com",type="smtp"} 1
     ssl_endpoint_up{domain="www.google.com",type="http"} 1
-    ssl_endpoint_up{domain="www.technobabble.dk",type="http"} 1
-
 
 ## Configuration
 

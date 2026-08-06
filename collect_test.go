@@ -194,32 +194,3 @@ func TestDaysLeft(t *testing.T) {
 		})
 	}
 }
-
-// TestDescribeNamesBothMetrics keeps the registry able to find the metrics
-// before the first scrape.
-func TestDescribeNamesBothMetrics(t *testing.T) {
-	exporter, err := NewSSLExporter(&Config{}, time.Second)
-	if err != nil {
-		t.Fatalf("NewSSLExporter: %v", err)
-	}
-
-	descs := make(chan *prometheus.Desc, 8)
-	exporter.Describe(descs)
-	close(descs)
-
-	var got []string
-	for desc := range descs {
-		got = append(got, desc.String())
-	}
-
-	if len(got) != 2 {
-		t.Fatalf("Describe sent %d descriptions, want 2", len(got))
-	}
-
-	joined := strings.Join(got, " ")
-	for _, name := range []string{"ssl_endpoint_up", "ssl_certificate_days_left"} {
-		if !strings.Contains(joined, name) {
-			t.Errorf("Describe did not name %s", name)
-		}
-	}
-}

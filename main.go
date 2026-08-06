@@ -50,6 +50,7 @@ type result struct {
 	probeType string
 	domain    string
 	up        bool
+	notBefore time.Time
 	notAfter  time.Time
 }
 
@@ -61,9 +62,19 @@ var errNoTLS = errors.New("the connection did not use TLS")
 var errNoPeerCertificate = errors.New("the peer sent no certificate")
 
 var (
+	certNotAfterDesc = prometheus.NewDesc(
+		"ssl_cert_not_after",
+		"End of the validity of the certificate, as seconds since the epoch",
+		[]string{"type", "domain"}, nil)
+
+	certNotBeforeDesc = prometheus.NewDesc(
+		"ssl_cert_not_before",
+		"Start of the validity of the certificate, as seconds since the epoch",
+		[]string{"type", "domain"}, nil)
+
 	certDaysLeftDesc = prometheus.NewDesc(
 		"ssl_certificate_days_left",
-		"Number of days left on the certificate",
+		"DEPRECATED: use (ssl_cert_not_after - time()) / 86400. Number of days left on the certificate",
 		[]string{"type", "domain"}, nil)
 
 	endpointUpDesc = prometheus.NewDesc(
@@ -120,6 +131,8 @@ func NewSSLExporter(config *Config, timeout time.Duration) (*Exporter, error) {
 
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- endpointUpDesc
+	ch <- certNotAfterDesc
+	ch <- certNotBeforeDesc
 	ch <- certDaysLeftDesc
 }
 
@@ -166,6 +179,14 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 		if !res.up {
 			continue
 		}
+
+		ch <- prometheus.MustNewConstMetric(certNotAfterDesc,
+			prometheus.GaugeValue, float64(res.notAfter.Unix()),
+			res.probeType, res.domain)
+
+		ch <- prometheus.MustNewConstMetric(certNotBeforeDesc,
+			prometheus.GaugeValue, float64(res.notBefore.Unix()),
+			res.probeType, res.domain)
 
 		ch <- prometheus.MustNewConstMetric(certDaysLeftDesc,
 			prometheus.GaugeValue, daysLeft(res.notAfter, now),
@@ -217,8 +238,11 @@ func probeHTTP(target httpTarget) (result, error) {
 		return res, errNoPeerCertificate
 	}
 
+	leaf := resp.TLS.PeerCertificates[0]
+
 	res.up = true
-	res.notAfter = resp.TLS.PeerCertificates[0].NotAfter
+	res.notBefore = leaf.NotBefore
+	res.notAfter = leaf.NotAfter
 
 	return res, nil
 }
@@ -263,8 +287,11 @@ func probeSMTP(target smtpTarget, timeout time.Duration) (result, error) {
 		return res, fmt.Errorf("%s: %w", address, errNoPeerCertificate)
 	}
 
+	leaf := state.PeerCertificates[0]
+
 	res.up = true
-	res.notAfter = state.PeerCertificates[0].NotAfter
+	res.notBefore = leaf.NotBefore
+	res.notAfter = leaf.NotAfter
 
 	return res, nil
 }
