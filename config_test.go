@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -8,9 +9,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"log"
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -144,6 +147,44 @@ func TestLoadConfigOldFormat(t *testing.T) {
 	}
 	if config.ServerTLS.Enabled() {
 		t.Error("ServerTLS.Enabled(): got true, want false")
+	}
+}
+
+// TestLoadConfigReportsUnknownKeys covers the spelling mistake that used to
+// pass without a word. The exporter keeps running with the defaults, and it
+// names every key that no field matches.
+func TestLoadConfigReportsUnknownKeys(t *testing.T) {
+	content := `
+listen_port = 9203
+
+[[http_domains]]
+  domain = "www.example.com"
+  cafile = "/etc/ssl/certs/internal-ca.pem"
+`
+
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	config, err := LoadConfig(writeFile(t, "checks.toml", content))
+	if err != nil {
+		t.Fatalf("LoadConfig returned an error: %v", err)
+	}
+
+	// The good keys still load.
+	if len(config.HTTPDomains) != 1 || config.HTTPDomains[0].Domain != "www.example.com" {
+		t.Errorf("http_domains: got %+v, want one entry for www.example.com", config.HTTPDomains)
+	}
+	// The wrong key does not reach the field that it looks like.
+	if got := config.HTTPDomains[0].CAFile; got != "" {
+		t.Errorf("http_domains[0].ca_file: got %q, want it empty", got)
+	}
+
+	output := logged.String()
+	for _, key := range []string{"cafile", "listen_port"} {
+		if !strings.Contains(output, key) {
+			t.Errorf("the log does not name %q: %s", key, output)
+		}
 	}
 }
 
