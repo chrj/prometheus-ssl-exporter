@@ -81,10 +81,22 @@ func LoadConfig(path string) (*Config, error) {
 
 // Validate reports the first fault that it finds in the configuration.
 func (c *Config) Validate() error {
+	// The metrics carry the labels "type" and "domain" only. Two targets of
+	// the same type and domain give two series with the same labels, which
+	// makes the whole scrape fail.
+	httpSeen := make(map[string]int, len(c.HTTPDomains))
+	smtpSeen := make(map[string]int, len(c.SMTPDomains))
+
 	for i, target := range c.HTTPDomains {
 		if target.Domain == "" {
 			return fmt.Errorf("http_domains[%d]: domain is required", i)
 		}
+		if first, ok := httpSeen[target.Domain]; ok {
+			return fmt.Errorf("http_domains[%d] %q: domain is already at http_domains[%d]",
+				i, target.Domain, first)
+		}
+		httpSeen[target.Domain] = i
+
 		if _, err := TLSConfig(target.Domain, target.CAFile, target.InsecureSkipVerify); err != nil {
 			return fmt.Errorf("http_domains[%d] %q: %w", i, target.Domain, err)
 		}
@@ -94,6 +106,12 @@ func (c *Config) Validate() error {
 		if target.Domain == "" {
 			return fmt.Errorf("smtp_domains[%d]: domain is required", i)
 		}
+		if first, ok := smtpSeen[target.Domain]; ok {
+			return fmt.Errorf("smtp_domains[%d] %q: domain is already at smtp_domains[%d]",
+				i, target.Domain, first)
+		}
+		smtpSeen[target.Domain] = i
+
 		if target.Port < 1 || target.Port > 65535 {
 			return fmt.Errorf("smtp_domains[%d] %q: port %d is outside the range 1-65535",
 				i, target.Domain, target.Port)

@@ -68,18 +68,18 @@ func TestNewHTTPClientPerTarget(t *testing.T) {
 // detector reports the shared-client fault here, because every probe runs in
 // its own goroutine.
 func TestCollectConcurrentTargets(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-	defer server.Close()
-
-	host := strings.TrimPrefix(server.URL, "https://")
-
+	// One server for each target. Two targets cannot share a domain, because
+	// the metrics of one scrape would then carry the same labels twice.
 	config := &Config{}
 	for i := 0; i < 8; i++ {
+		server := httptest.NewTLSServer(http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+		defer server.Close()
+
 		config.HTTPDomains = append(config.HTTPDomains, HTTPDomain{
-			Domain: host,
+			Domain: strings.TrimPrefix(server.URL, "https://"),
 			// The certificate of the test server names 127.0.0.1, not the
 			// host and port that the probe sends as the server name.
 			InsecureSkipVerify: true,
@@ -114,23 +114,22 @@ func TestCollectConcurrentTargets(t *testing.T) {
 		t.Fatalf("Gather: %v", err)
 	}
 
-	var up float64
-	var found bool
+	var count int
 	for _, family := range families {
 		if family.GetName() != "ssl_endpoint_up" {
 			continue
 		}
 		for _, metric := range family.GetMetric() {
-			found = true
-			up = metric.GetGauge().GetValue()
+			count++
+			if up := metric.GetGauge().GetValue(); up != 1 {
+				t.Errorf("ssl_endpoint_up for %v: got %v, want 1",
+					metric.GetLabel(), up)
+			}
 		}
 	}
 
-	if !found {
-		t.Fatal("ssl_endpoint_up is not in the gathered metrics")
-	}
-	if up != 1 {
-		t.Errorf("ssl_endpoint_up: got %v, want 1", up)
+	if count != 8 {
+		t.Errorf("ssl_endpoint_up series: got %d, want 8", count)
 	}
 }
 

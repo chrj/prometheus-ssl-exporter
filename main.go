@@ -2,10 +2,10 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -42,10 +42,35 @@ type smtpTarget struct {
 type Exporter struct {
 	httpTargets []httpTarget
 	smtpTargets []smtpTarget
-
-	certificates *prometheus.GaugeVec
-	status       *prometheus.GaugeVec
+	timeout     time.Duration
 }
+
+// result is the outcome of one probe. Collect turns it into metrics.
+type result struct {
+	probeType string
+	domain    string
+	up        bool
+	notAfter  time.Time
+}
+
+// errNoTLS reports a response that carries no TLS state. An HTTPS target
+// that redirects to plain HTTP gives such a response.
+var errNoTLS = errors.New("the connection did not use TLS")
+
+// errNoPeerCertificate reports a TLS state with an empty certificate chain.
+var errNoPeerCertificate = errors.New("the peer sent no certificate")
+
+var (
+	certDaysLeftDesc = prometheus.NewDesc(
+		"ssl_certificate_days_left",
+		"Number of days left on the certificate",
+		[]string{"type", "domain"}, nil)
+
+	endpointUpDesc = prometheus.NewDesc(
+		"ssl_endpoint_up",
+		"Was the last SSL poll successful",
+		[]string{"type", "domain"}, nil)
+)
 
 // newHTTPClient builds the client for one target. The TLS settings go in the
 // transport of the client, so no probe writes to shared state.
@@ -65,7 +90,7 @@ func newHTTPClient(target HTTPDomain, timeout time.Duration) (*http.Client, erro
 }
 
 func NewSSLExporter(config *Config, timeout time.Duration) (*Exporter, error) {
-	exporter := newExporter()
+	exporter := &Exporter{timeout: timeout}
 
 	for _, target := range config.HTTPDomains {
 		client, err := newHTTPClient(target, timeout)
@@ -93,192 +118,155 @@ func NewSSLExporter(config *Config, timeout time.Duration) (*Exporter, error) {
 	return exporter, nil
 }
 
-func newExporter() *Exporter {
-	return &Exporter{
-		certificates: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: "ssl",
-				Subsystem: "certificate",
-				Name:      "days_left",
-				Help:      "Number of days left on the certificate",
-			},
-			[]string{
-				"type",
-				"domain",
-			},
-		),
-		status: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: "ssl",
-				Subsystem: "endpoint",
-				Name:      "up",
-				Help:      "Was the last SSL poll successful",
-			},
-			[]string{
-				"type",
-				"domain",
-			},
-		),
+func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
+	ch <- endpointUpDesc
+	ch <- certDaysLeftDesc
+}
+
+// Collect probes every target and writes the metrics of this scrape. It
+// builds the metrics from the results of this scrape only, so a target that
+// leaves the configuration leaves the output, and a probe that fails reports
+// no expiry.
+func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+
+	results := make([]result, len(e.httpTargets)+len(e.smtpTargets))
+
+	var wg sync.WaitGroup
+	wg.Add(len(results))
+
+	for i, target := range e.httpTargets {
+		go func(slot int, target httpTarget) {
+			defer wg.Done()
+			results[slot] = e.probe(probeHTTP(target))
+		}(i, target)
+	}
+
+	offset := len(e.httpTargets)
+
+	for i, target := range e.smtpTargets {
+		go func(slot int, target smtpTarget) {
+			defer wg.Done()
+			results[slot] = e.probe(probeSMTP(target, e.timeout))
+		}(offset+i, target)
+	}
+
+	wg.Wait()
+
+	now := time.Now()
+
+	for _, res := range results {
+		up := 0.0
+		if res.up {
+			up = 1
+		}
+
+		ch <- prometheus.MustNewConstMetric(endpointUpDesc,
+			prometheus.GaugeValue, up, res.probeType, res.domain)
+
+		if !res.up {
+			continue
+		}
+
+		ch <- prometheus.MustNewConstMetric(certDaysLeftDesc,
+			prometheus.GaugeValue, daysLeft(res.notAfter, now),
+			res.probeType, res.domain)
 	}
 }
 
-func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
-	e.certificates.Describe(ch)
-	e.status.Describe(ch)
-}
-
-func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
-
-	var top sync.WaitGroup
-
-	top.Add(2)
-
-	go func() {
-
-		// Collect HTTP domains
-
-		var wg sync.WaitGroup
-
-		wg.Add(len(e.httpTargets))
-
-		for _, target := range e.httpTargets {
-
-			target := target
-
-			go func() {
-				e.collectHTTPDomain(target)
-				wg.Done()
-			}()
-
-		}
-
-		wg.Wait()
-
-		top.Done()
-
-	}()
-
-	go func() {
-
-		// Collect SMTP domains
-
-		var wg sync.WaitGroup
-
-		wg.Add(len(e.smtpTargets))
-
-		for _, target := range e.smtpTargets {
-
-			target := target
-
-			go func() {
-				e.collectSMTPDomain(target)
-				wg.Done()
-			}()
-
-		}
-
-		wg.Wait()
-
-		top.Done()
-
-	}()
-
-	top.Wait()
-
-	e.certificates.Collect(ch)
-	e.status.Collect(ch)
-
-}
-
-func (e *Exporter) collectHTTPDomain(target httpTarget) {
-
-	domain := target.domain
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/", domain), nil)
+// probe logs the error of a probe and returns its result.
+func (e *Exporter) probe(res result, err error) result {
 	if err != nil {
-		log.Printf("error building the request for %v: %v", domain, err)
-		e.status.WithLabelValues("http", domain).Set(0)
-		return
+		log.Printf("probe %s target %s: %v", res.probeType, res.domain, err)
+	}
+	return res
+}
+
+// daysLeft gives the days between now and the end of the certificate. The
+// value is negative for a certificate that ended.
+func daysLeft(notAfter, now time.Time) float64 {
+	return notAfter.Sub(now).Hours() / 24
+}
+
+func probeHTTP(target httpTarget) (result, error) {
+
+	res := result{probeType: "http", domain: target.domain}
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/", target.domain), nil)
+	if err != nil {
+		return res, fmt.Errorf("build the request: %w", err)
 	}
 	req.Header.Set("User-Agent", "prometheus-ssl-exporter/0.1 (SSL monitoring)")
 
 	resp, err := target.client.Do(req)
 	if err != nil {
-		log.Printf("error connecting to %v: %v", domain, err)
-		e.status.WithLabelValues("http", domain).Set(0)
-		return
+		return res, fmt.Errorf("connect: %w", err)
 	}
 
 	defer resp.Body.Close()
 
-	if _, err := io.Copy(ioutil.Discard, resp.Body); err != nil {
-		log.Printf("error reading response from %v: %v", domain, err)
-		e.status.WithLabelValues("http", domain).Set(0)
-		return
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return res, fmt.Errorf("read the response: %w", err)
 	}
 
-	cert := resp.TLS.PeerCertificates[0]
+	// A target that redirects to plain HTTP gives a response with no TLS
+	// state. Reading the certificate here would stop the exporter.
+	if resp.TLS == nil {
+		return res, errNoTLS
+	}
+	if len(resp.TLS.PeerCertificates) == 0 {
+		return res, errNoPeerCertificate
+	}
 
-	e.certificates.WithLabelValues("http", domain).Set(
-		float64(time.Until(cert.NotAfter)/time.Hour) / 24,
-	)
+	res.up = true
+	res.notAfter = resp.TLS.PeerCertificates[0].NotAfter
 
-	e.status.WithLabelValues("http", domain).Set(1)
-
+	return res, nil
 }
 
-func (e *Exporter) collectSMTPDomain(smtpTarget smtpTarget) {
+func probeSMTP(target smtpTarget, timeout time.Duration) (result, error) {
 
-	domain := smtpTarget.domain
+	res := result{probeType: "smtp", domain: target.domain}
 
-	target := net.JoinHostPort(domain, strconv.Itoa(smtpTarget.port))
+	address := net.JoinHostPort(target.domain, strconv.Itoa(target.port))
 
 	start := time.Now()
 
-	conn, err := net.DialTimeout("tcp", target, *timeout)
+	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
-		log.Printf("error connecting to smtp server %v: %v", target, err)
-		e.status.WithLabelValues("smtp", domain).Set(0)
-		return
+		return res, fmt.Errorf("connect to %s: %w", address, err)
 	}
 
 	// Close the connection on every path. smtp.NewClient takes it over only
 	// when it succeeds, and Quit does not run when it fails.
 	defer conn.Close()
 
-	conn.SetDeadline(start.Add(*timeout))
-
-	c, err := smtp.NewClient(conn, domain)
-	if err != nil {
-		log.Printf("error collecting %v: %v", target, err)
-		e.status.WithLabelValues("smtp", domain).Set(0)
-		return
+	if err := conn.SetDeadline(start.Add(timeout)); err != nil {
+		return res, fmt.Errorf("set the deadline for %s: %w", address, err)
 	}
 
-	defer c.Quit()
-
-	err = c.StartTLS(smtpTarget.tls)
+	client, err := smtp.NewClient(conn, target.domain)
 	if err != nil {
-		log.Printf("STARTTLS handshake failed for %v: %v", target, err)
-		e.status.WithLabelValues("smtp", domain).Set(0)
-		return
+		return res, fmt.Errorf("start the session with %s: %w", address, err)
 	}
 
-	state, ok := c.TLSConnectionState()
+	defer client.Quit()
+
+	if err := client.StartTLS(target.tls); err != nil {
+		return res, fmt.Errorf("STARTTLS with %s: %w", address, err)
+	}
+
+	state, ok := client.TLSConnectionState()
 	if !ok {
-		log.Printf("couldn't get TLS state from %v", target)
-		e.status.WithLabelValues("smtp", domain).Set(0)
-		return
+		return res, fmt.Errorf("%s: %w", address, errNoTLS)
+	}
+	if len(state.PeerCertificates) == 0 {
+		return res, fmt.Errorf("%s: %w", address, errNoPeerCertificate)
 	}
 
-	cert := state.PeerCertificates[0]
+	res.up = true
+	res.notAfter = state.PeerCertificates[0].NotAfter
 
-	e.certificates.WithLabelValues("smtp", domain).Set(
-		float64(time.Until(cert.NotAfter)/time.Hour) / 24,
-	)
-
-	e.status.WithLabelValues("smtp", domain).Set(1)
-
+	return res, nil
 }
 
 func main() {
