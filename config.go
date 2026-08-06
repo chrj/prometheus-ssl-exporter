@@ -65,7 +65,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open the configuration file %s: %w", path, err)
 	}
-	defer f.Close()
+	// The file is open for reading only, so a close error says nothing that
+	// the caller can act on.
+	defer func() { _ = f.Close() }()
 
 	var config Config
 	if err := toml.NewDecoder(f).Decode(&config); err != nil {

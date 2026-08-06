@@ -223,7 +223,9 @@ func probeHTTP(target httpTarget) (result, error) {
 		return res, fmt.Errorf("connect: %w", err)
 	}
 
-	defer resp.Body.Close()
+	// The body is read only, so a close error says nothing about the
+	// certificate that the probe came for.
+	defer func() { _ = resp.Body.Close() }()
 
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		return res, fmt.Errorf("read the response: %w", err)
@@ -261,8 +263,10 @@ func probeSMTP(target smtpTarget, timeout time.Duration) (result, error) {
 	}
 
 	// Close the connection on every path. smtp.NewClient takes it over only
-	// when it succeeds, and Quit does not run when it fails.
-	defer conn.Close()
+	// when it succeeds, and Quit does not run when it fails. A close error
+	// after a finished probe changes nothing, and Quit closes first on the
+	// path where it runs.
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(start.Add(timeout)); err != nil {
 		return res, fmt.Errorf("set the deadline for %s: %w", address, err)
@@ -273,7 +277,10 @@ func probeSMTP(target smtpTarget, timeout time.Duration) (result, error) {
 		return res, fmt.Errorf("start the session with %s: %w", address, err)
 	}
 
-	defer client.Quit()
+	// QUIT is a courtesy to the mail server. The probe already has the
+	// certificate by the time this runs, so a failure here is not a failure
+	// of the probe.
+	defer func() { _ = client.Quit() }()
 
 	if err := client.StartTLS(target.tls); err != nil {
 		return res, fmt.Errorf("STARTTLS with %s: %w", address, err)
