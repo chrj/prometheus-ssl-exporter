@@ -1,7 +1,6 @@
 # SSL Exporter for Prometheus
 
 [![CI](https://github.com/chrj/prometheus-ssl-exporter/actions/workflows/go.yml/badge.svg)](https://github.com/chrj/prometheus-ssl-exporter/actions/workflows/go.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/chrj/prometheus-ssl-exporter)](https://goreportcard.com/report/github.com/chrj/prometheus-ssl-exporter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Watch the certificates of your HTTPS and SMTP endpoints, and get an alert
