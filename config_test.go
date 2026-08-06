@@ -236,6 +236,33 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "the same HTTP domain twice",
+			config: Config{
+				HTTPDomains: []HTTPDomain{
+					{Domain: "www.example.com"},
+					{Domain: "www.example.com", InsecureSkipVerify: true},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "the same SMTP domain on two ports",
+			config: Config{
+				SMTPDomains: []SMTPDomain{
+					{Domain: "mail.example.com", Port: 25},
+					{Domain: "mail.example.com", Port: 587},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "the same domain for HTTP and SMTP",
+			config: Config{
+				HTTPDomains: []HTTPDomain{{Domain: "mail.example.com"}},
+				SMTPDomains: []SMTPDomain{{Domain: "mail.example.com", Port: 587}},
+			},
+		},
 	}
 
 	for _, test := range tests {
