@@ -106,4 +106,14 @@ Supply a listen address with `-addr` (optionally, defaults to `:9203`), and conf
 
 ## Prometheus alert
 
-The real benefit is getting an alert triggered when an SSL certificate is nearing expiration or not responding. Check this [sample alert definition](ssl.rules).
+The real benefit is getting an alert triggered when an SSL certificate is nearing expiration or not responding. Check this [sample alert definition](ssl.rules.yml).
+
+The file holds three alerts:
+
+* `SSLCertificateNearExpiration`: the certificate is valid and ends in
+  less than 21 days.
+* `SSLCertificateExpired`: the certificate ended.
+* `SSLEndpointDown`: the last probe of the target failed.
+
+Check the file with `promtool check rules ssl.rules.yml` after you change
+it.
