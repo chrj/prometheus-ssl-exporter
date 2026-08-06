@@ -1,0 +1,50 @@
+groups:
+  - name: ssl
+    rules:
+      # Fires while the certificate is still valid. SSLCertificateExpired
+      # takes over after the end of the validity, so only one of the two
+      # fires at a time.
+      - alert: SSLCertificateNearExpiration
+        expr: >-
+          (ssl_cert_not_after - time()) / 86400 < 21
+          and (ssl_cert_not_after - time()) > 0
+        for: 1h
+        labels:
+          urgency: immediate
+        annotations:
+          title: >-
+            The certificate for {{ $labels.domain }} ({{ $labels.type }})
+            expires soon
+          description: >-
+            The certificate for {{ $labels.domain }} ({{ $labels.type }})
+            expires in {{ $value | printf "%.1f" }} day(s)
+
+      # The value is the seconds since the end of the validity, so
+      # humanizeDuration reads correctly.
+      - alert: SSLCertificateExpired
+        expr: time() - ssl_cert_not_after > 0
+        for: 5m
+        labels:
+          urgency: immediate
+        annotations:
+          title: >-
+            The certificate for {{ $labels.domain }} ({{ $labels.type }})
+            expired
+          description: >-
+            The certificate for {{ $labels.domain }} ({{ $labels.type }})
+            expired {{ $value | humanizeDuration }} ago
+
+      - alert: SSLEndpointDown
+        expr: ssl_endpoint_up == 0
+        # A probe fails for a moment when a network path breaks or a server
+        # restarts. Wait for several scrapes before the alert fires.
+        for: 15m
+        labels:
+          urgency: immediate
+        annotations:
+          title: >-
+            The SSL endpoint for {{ $labels.domain }} ({{ $labels.type }})
+            is not responding
+          description: >-
+            The SSL endpoint for {{ $labels.domain }} ({{ $labels.type }})
+            did not answer the last probe
