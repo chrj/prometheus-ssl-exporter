@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -74,18 +76,57 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- certDaysLeftDesc
 }
 
-// Collect probes every target and writes the metrics of this scrape. It
+// scrape is the collector for one request. It holds a context, which a
+// collector cannot take as an argument, so the probes of one scrape stop when
+// the server that asked for them goes away.
+type scrape struct {
+	exporter *Exporter
+	ctx      context.Context
+}
+
+// newScrape gives the collector for one scrape.
+func (e *Exporter) newScrape(ctx context.Context) scrape {
+	return scrape{exporter: e, ctx: ctx}
+}
+
+func (s scrape) Describe(ch chan<- *prometheus.Desc) {
+	s.exporter.Describe(ch)
+}
+
+func (s scrape) Collect(ch chan<- prometheus.Metric) {
+	s.exporter.collect(s.ctx, ch)
+}
+
+// Handler serves the metrics. It builds a registry for each request, because
+// only a collector made for that request can carry its context.
+func (e *Exporter) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), e.timeout)
+		defer cancel()
+
+		registry := prometheus.NewRegistry()
+		if err := registry.Register(e.newScrape(ctx)); err != nil {
+			log.Printf("register the collector for a scrape: %v", err)
+			http.Error(w, "the exporter could not build the metrics for this scrape",
+				http.StatusInternalServerError)
+			return
+		}
+
+		// The default gatherer holds the go_ and process_ metrics, which the
+		// registry of this request does not.
+		gatherers := prometheus.Gatherers{prometheus.DefaultGatherer, registry}
+
+		promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}).ServeHTTP(w, r)
+	})
+}
+
+// collect probes every target and writes the metrics of this scrape. It
 // builds the metrics from the results of this scrape only, so a target that
 // leaves the configuration leaves the output, and a probe that fails reports
 // no expiry.
-func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+func (e *Exporter) collect(ctx context.Context, ch chan<- prometheus.Metric) {
 
 	results := make([]result, len(e.httpTargets)+len(e.smtpTargets))
-
-	// The Collector interface carries no context, so the scrape makes its own.
-	// The deadline bounds every probe of this scrape together.
-	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
-	defer cancel()
 
 	var wg sync.WaitGroup
 	wg.Add(len(results))

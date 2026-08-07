@@ -5,9 +5,6 @@ import (
 	"log"
 	"net/http"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -30,10 +27,8 @@ func main() {
 		log.Fatalf("couldn't build the exporter: %v", err)
 	}
 
-	prometheus.MustRegister(exporter)
-
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/metrics", exporter.Handler())
 
 	// The timeouts stop a client that opens a connection and then stalls.
 	// WriteTimeout covers the whole response, so it holds every probe of one

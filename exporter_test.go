@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,114 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// TestHandlerServesBothRegistries makes sure that one scrape carries the
+// metrics of the exporter and the metrics of the process. The exporter builds
+// a registry for each request, and only the default one holds go_ and
+// process_.
+func TestHandlerServesBothRegistries(t *testing.T) {
+	target := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+	defer target.Close()
+
+	exporter, err := NewSSLExporter(&Config{
+		HTTPDomains: []HTTPDomain{{
+			Domain:             strings.TrimPrefix(target.URL, "https://"),
+			InsecureSkipVerify: true,
+		}},
+	}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("NewSSLExporter: %v", err)
+	}
+
+	metrics := httptest.NewServer(exporter.Handler())
+	defer metrics.Close()
+
+	// Two scrapes, because a registry that the handler keeps between requests
+	// would fail the second one.
+	for _, scrapeNumber := range []int{1, 2} {
+		resp, err := metrics.Client().Get(metrics.URL)
+		if err != nil {
+			t.Fatalf("scrape %d: %v", scrapeNumber, err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("scrape %d: read the body: %v", scrapeNumber, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatalf("scrape %d: close the body: %v", scrapeNumber, err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("scrape %d status: got %d, want %d",
+				scrapeNumber, resp.StatusCode, http.StatusOK)
+		}
+
+		for _, name := range []string{"ssl_endpoint_up", "ssl_cert_not_after", "go_goroutines"} {
+			if !strings.Contains(string(body), name) {
+				t.Errorf("scrape %d: %s is not in the output", scrapeNumber, name)
+			}
+		}
+	}
+}
+
+// TestHandlerStopsTheProbesWhenTheClientGoesAway is the reason the handler
+// builds a collector for each request. A scrape that the Prometheus server
+// drops must not leave the probes running.
+func TestHandlerStopsTheProbesWhenTheClientGoesAway(t *testing.T) {
+	// The target holds the response, so only a cancelled probe ends it. It
+	// reports that its own context ended, which happens when the probe stops.
+	aborted := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	target := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+				select {
+				case aborted <- struct{}{}:
+				default:
+				}
+			case <-release:
+			}
+		}))
+	defer target.Close()
+	defer close(release)
+
+	// A timeout long enough that only the client going away ends the probe.
+	exporter, err := NewSSLExporter(&Config{
+		HTTPDomains: []HTTPDomain{{
+			Domain:             strings.TrimPrefix(target.URL, "https://"),
+			InsecureSkipVerify: true,
+		}},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("NewSSLExporter: %v", err)
+	}
+
+	metrics := httptest.NewServer(exporter.Handler())
+	defer metrics.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metrics.URL, nil)
+	if err != nil {
+		t.Fatalf("build the request: %v", err)
+	}
+	if _, err := metrics.Client().Do(req); err == nil {
+		t.Fatal("the scrape finished, so the target did not hold the response")
+	}
+
+	select {
+	case <-aborted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the probe kept running after the client went away")
+	}
+}
 
 // TestCollectConcurrentTargets probes several targets in one scrape. The race
 // detector reports the shared-client fault here, because every probe runs in
@@ -39,7 +149,7 @@ func TestCollectConcurrentTargets(t *testing.T) {
 	}
 
 	registry := prometheus.NewPedanticRegistry()
-	if err := registry.Register(exporter); err != nil {
+	if err := registry.Register(exporter.newScrape(t.Context())); err != nil {
 		t.Fatalf("register the exporter: %v", err)
 	}
 

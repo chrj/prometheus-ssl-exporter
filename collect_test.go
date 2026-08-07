@@ -46,7 +46,7 @@ func registerTarget(t *testing.T, host string) *prometheus.Registry {
 	}
 
 	registry := prometheus.NewPedanticRegistry()
-	if err := registry.Register(exporter); err != nil {
+	if err := registry.Register(exporter.newScrape(t.Context())); err != nil {
 		t.Fatalf("register the exporter: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestTargetLeavesTheOutput(t *testing.T) {
 		t.Fatalf("NewSSLExporter: %v", err)
 	}
 	registry := prometheus.NewPedanticRegistry()
-	if err := registry.Register(empty); err != nil {
+	if err := registry.Register(empty.newScrape(t.Context())); err != nil {
 		t.Fatalf("register the exporter: %v", err)
 	}
 
