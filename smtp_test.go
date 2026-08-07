@@ -81,6 +81,14 @@ func newTestCA(t *testing.T) testCA {
 		t.Fatalf("create the certificate of the server: %v", err)
 	}
 
+	// Leaf holds the parsed certificate, not the template. x509 keeps the
+	// dates to the second, so only the parsed form carries the dates that a
+	// probe reads back from the server.
+	serverCert, err := x509.ParseCertificate(serverDER)
+	if err != nil {
+		t.Fatalf("parse the certificate of the server: %v", err)
+	}
+
 	caPath := filepath.Join(t.TempDir(), "ca.pem")
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
 	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
@@ -92,7 +100,7 @@ func newTestCA(t *testing.T) testCA {
 		ServerCert: tls.Certificate{
 			Certificate: [][]byte{serverDER},
 			PrivateKey:  serverKey,
-			Leaf:        &serverTemplate,
+			Leaf:        serverCert,
 		},
 	}
 }
