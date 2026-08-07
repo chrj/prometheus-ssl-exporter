@@ -1,16 +1,16 @@
 name: prometheus-ssl-exporter
 
 on:
-  # Only master runs on push. A branch listed here that also has a pull
+  # Only main runs on push. A branch listed here that also has a pull
   # request runs the same commit twice, once for each event.
   push:
     branches:
-      - master
+      - main
   pull_request:
 
 jobs:
 
-  # "Build and Test" is the required status check on master. A new name here
+  # "Build and Test" is the required status check on main. A new name here
   # needs a matching change to the branch protection rule.
   build:
     name: Build and Test
