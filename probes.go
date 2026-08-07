@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -51,7 +52,13 @@ func newHTTPClient(target HTTPDomain, timeout time.Duration) (*http.Client, erro
 		return nil, fmt.Errorf("TLS settings for %s: %w", target.Domain, err)
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("the default HTTP transport is %T, not *http.Transport",
+			http.DefaultTransport)
+	}
+
+	transport := defaultTransport.Clone()
 	transport.TLSClientConfig = tlsConfig
 
 	return &http.Client{
@@ -60,11 +67,12 @@ func newHTTPClient(target HTTPDomain, timeout time.Duration) (*http.Client, erro
 	}, nil
 }
 
-func probeHTTP(target httpTarget) (result, error) {
+func probeHTTP(ctx context.Context, target httpTarget) (result, error) {
 
 	res := result{probeType: "http", domain: target.domain}
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/", target.domain), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("https://%s/", target.domain), nil)
 	if err != nil {
 		return res, fmt.Errorf("build the request: %w", err)
 	}
@@ -101,7 +109,10 @@ func probeHTTP(target httpTarget) (result, error) {
 	return res, nil
 }
 
-func probeSMTP(target smtpTarget, timeout time.Duration) (result, error) {
+// probeSMTP takes both a context and a timeout. The context cancels the dial
+// and gives the deadline of the scrape. The timeout bounds this one session, so
+// the probe still stops when the context carries no deadline.
+func probeSMTP(ctx context.Context, target smtpTarget, timeout time.Duration) (result, error) {
 
 	res := result{probeType: "smtp", domain: target.domain}
 
@@ -109,7 +120,9 @@ func probeSMTP(target smtpTarget, timeout time.Duration) (result, error) {
 
 	start := time.Now()
 
-	conn, err := net.DialTimeout("tcp", address, timeout)
+	dialer := net.Dialer{Timeout: timeout}
+
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return res, fmt.Errorf("connect to %s: %w", address, err)
 	}
@@ -120,7 +133,15 @@ func probeSMTP(target smtpTarget, timeout time.Duration) (result, error) {
 	// path where it runs.
 	defer func() { _ = conn.Close() }()
 
-	if err := conn.SetDeadline(start.Add(timeout)); err != nil {
+	// smtp.Client watches no context, so the deadline of the connection is the
+	// only thing that ends the session. Take whichever comes first, so the
+	// deadline of the scrape holds the session as well.
+	deadline := start.Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+
+	if err := conn.SetDeadline(deadline); err != nil {
 		return res, fmt.Errorf("set the deadline for %s: %w", address, err)
 	}
 

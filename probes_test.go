@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -88,7 +89,7 @@ func TestProbeHTTPReadsTheCertificate(t *testing.T) {
 	host := strings.TrimPrefix(server.URL, "https://")
 	leaf := server.Certificate()
 
-	res, err := probeHTTP(newHTTPProbeTarget(t, host))
+	res, err := probeHTTP(t.Context(), newHTTPProbeTarget(t, host))
 	if err != nil {
 		t.Fatalf("probeHTTP: %v", err)
 	}
@@ -128,7 +129,7 @@ func TestProbeHTTPRedirectToPlainHTTP(t *testing.T) {
 
 	host := strings.TrimPrefix(secure.URL, "https://")
 
-	res, err := probeHTTP(newHTTPProbeTarget(t, host))
+	res, err := probeHTTP(t.Context(), newHTTPProbeTarget(t, host))
 	if !errors.Is(err, errNoTLS) {
 		t.Errorf("probeHTTP: got %v, want %v", err, errNoTLS)
 	}
@@ -150,7 +151,7 @@ func TestProbeHTTPKeepsTheLabelsWhenItFails(t *testing.T) {
 	// The target stops answering.
 	server.Close()
 
-	res, err := probeHTTP(target)
+	res, err := probeHTTP(t.Context(), target)
 	if err == nil {
 		t.Fatal("probeHTTP returned no error for a target that does not answer")
 	}
@@ -165,6 +166,70 @@ func TestProbeHTTPKeepsTheLabelsWhenItFails(t *testing.T) {
 	}
 }
 
+// TestProbeHTTPStopsOnACancelledContext cancels a probe that is waiting for a
+// response. Without the context the probe runs to the timeout of its client,
+// so a scrape that the Prometheus server dropped keeps working.
+func TestProbeHTTPStopsOnACancelledContext(t *testing.T) {
+	// The handler holds the response, so only the context ends the probe. It
+	// watches the context of the request as well, so Close does not wait.
+	release := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		}))
+	defer server.Close()
+	defer close(release)
+
+	target := newHTTPProbeTarget(t, strings.TrimPrefix(server.URL, "https://"))
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := probeHTTP(ctx, target)
+		done <- err
+	}()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		// A client that ignores the context gives a timeout after 3 seconds
+		// instead, which this check does not accept.
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("probeHTTP: got %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("probeHTTP did not return after the context was cancelled")
+	}
+}
+
+// TestProbeSMTPStopsOnACancelledContext makes sure that the context reaches
+// the dial of an SMTP probe.
+func TestProbeSMTPStopsOnACancelledContext(t *testing.T) {
+	ca := newTestCA(t)
+	port := startSMTPServer(t, ca.ServerCert)
+
+	tlsConfig, err := TLSConfig("localhost", ca.CAFile, false)
+	if err != nil {
+		t.Fatalf("TLSConfig: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	res, err := probeSMTP(ctx, smtpTarget{domain: "localhost", port: port, tls: tlsConfig}, 5*time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("probeSMTP: got %v, want %v", err, context.Canceled)
+	}
+	if res.up {
+		t.Error("up: got true, want false")
+	}
+}
+
 // TestProbeSMTPRejectsAnUntrustedCertificate names the STARTTLS failure for a
 // server whose authority the probe does not hold.
 func TestProbeSMTPRejectsAnUntrustedCertificate(t *testing.T) {
@@ -176,7 +241,7 @@ func TestProbeSMTPRejectsAnUntrustedCertificate(t *testing.T) {
 		t.Fatalf("TLSConfig: %v", err)
 	}
 
-	res, err := probeSMTP(smtpTarget{domain: "localhost", port: port, tls: tlsConfig}, 5*time.Second)
+	res, err := probeSMTP(t.Context(), smtpTarget{domain: "localhost", port: port, tls: tlsConfig}, 5*time.Second)
 	if err == nil {
 		t.Fatal("probeSMTP returned no error for an untrusted certificate")
 	}
@@ -202,7 +267,7 @@ func TestProbeSMTPReadsTheCertificate(t *testing.T) {
 		t.Fatalf("TLSConfig: %v", err)
 	}
 
-	res, err := probeSMTP(smtpTarget{domain: "localhost", port: port, tls: tlsConfig}, 5*time.Second)
+	res, err := probeSMTP(t.Context(), smtpTarget{domain: "localhost", port: port, tls: tlsConfig}, 5*time.Second)
 	if err != nil {
 		t.Fatalf("probeSMTP: %v", err)
 	}
