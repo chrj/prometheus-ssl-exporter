@@ -147,8 +147,11 @@ func (c *Config) Validate() error {
 // startup instead of breaking each scrape.
 func TLSConfig(serverName, caFile string, skipVerify bool) (*tls.Config, error) {
 	config := &tls.Config{
-		ServerName:         serverName,
-		InsecureSkipVerify: skipVerify,
+		ServerName: serverName,
+		// The operator turns the checks off for one target, and the probe
+		// then reports the expiry of a certificate that it cannot trust.
+		// That is what the setting is for.
+		InsecureSkipVerify: skipVerify, //nolint:gosec // the operator asks for this per target
 		MinVersion:         tls.VersionTLS12,
 	}
 
@@ -156,7 +159,7 @@ func TLSConfig(serverName, caFile string, skipVerify bool) (*tls.Config, error) 
 		return config, nil
 	}
 
-	pem, err := os.ReadFile(caFile)
+	pem, err := os.ReadFile(caFile) //nolint:gosec // the operator names this file in the configuration
 	if err != nil {
 		return nil, fmt.Errorf("read the CA file: %w", err)
 	}
