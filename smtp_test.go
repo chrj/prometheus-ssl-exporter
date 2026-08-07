@@ -163,7 +163,7 @@ func gatherSMTP(t *testing.T, target SMTPDomain) float64 {
 	}
 
 	registry := prometheus.NewPedanticRegistry()
-	if err := registry.Register(exporter); err != nil {
+	if err := registry.Register(exporter.newScrape(t.Context())); err != nil {
 		t.Fatalf("register the exporter: %v", err)
 	}
 
@@ -249,7 +249,7 @@ func TestSMTPCertificateExpiry(t *testing.T) {
 	}
 
 	registry := prometheus.NewPedanticRegistry()
-	if err := registry.Register(exporter); err != nil {
+	if err := registry.Register(exporter.newScrape(t.Context())); err != nil {
 		t.Fatalf("register the exporter: %v", err)
 	}
 

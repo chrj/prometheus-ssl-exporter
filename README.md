@@ -141,6 +141,10 @@ today. It goes away in a later major version.
 Each scrape starts one probe for each target, so keep the interval longer
 than the time that the slowest target needs.
 
+The exporter stops the probes of a scrape when Prometheus gives up on that
+scrape. Keep `scrape_timeout` longer than `-timeout`. A scrape that ends
+early reports no metrics at all, for any target.
+
 ## Alerting
 
 The [sample alert definition](ssl.rules.yml) holds three alerts:
