@@ -6,5 +6,5 @@ build:
 run: build
 	@./bin/$(BINARY_NAME)
 
-# run-config: build
-# 	@./bin/$(BINARY_NAME) --exporter-config /path/to/config/exporter.yml
+run-sample: build
+	@./bin/$(BINARY_NAME) -config config.sample
