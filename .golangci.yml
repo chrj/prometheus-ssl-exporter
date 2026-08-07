@@ -1,0 +1,18 @@
+version: "2"
+
+linters:
+  # These three catch faults that the default set lets through: a server
+  # with no timeouts, network calls that no caller can cancel, and a type
+  # assertion that stops the process.
+  enable:
+    - forcetypeassert
+    - gosec
+    - noctx
+
+  exclusions:
+    rules:
+      # A test listener serves one test and stops with it, so it needs no
+      # context to cancel.
+      - path: _test\.go
+        linters:
+          - noctx

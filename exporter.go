@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -81,13 +82,18 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	results := make([]result, len(e.httpTargets)+len(e.smtpTargets))
 
+	// The Collector interface carries no context, so the scrape makes its own.
+	// The deadline bounds every probe of this scrape together.
+	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
+	defer cancel()
+
 	var wg sync.WaitGroup
 	wg.Add(len(results))
 
 	for i, target := range e.httpTargets {
 		go func(slot int, target httpTarget) {
 			defer wg.Done()
-			results[slot] = e.probe(probeHTTP(target))
+			results[slot] = e.probe(probeHTTP(ctx, target))
 		}(i, target)
 	}
 
@@ -96,7 +102,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	for i, target := range e.smtpTargets {
 		go func(slot int, target smtpTarget) {
 			defer wg.Done()
-			results[slot] = e.probe(probeSMTP(target, e.timeout))
+			results[slot] = e.probe(probeSMTP(ctx, target, e.timeout))
 		}(offset+i, target)
 	}
 
