@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/chrj/smtpd/v2 v2.3.0
+	github.com/chrj/smtpd/v2 v2.3.1
 	github.com/prometheus/client_golang v1.24.1
 )
 
