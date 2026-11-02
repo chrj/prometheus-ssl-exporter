@@ -128,7 +128,7 @@ func TestCollectConcurrentTargets(t *testing.T) {
 	// One server for each target. Two targets cannot share a domain, because
 	// the metrics of one scrape would then carry the same labels twice.
 	config := &Config{}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		server := httptest.NewTLSServer(http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -156,7 +156,7 @@ func TestCollectConcurrentTargets(t *testing.T) {
 	// Two scrapes at the same time, as two Prometheus servers would do.
 	var wg sync.WaitGroup
 	wg.Add(2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		go func() {
 			defer wg.Done()
 			if _, err := registry.Gather(); err != nil {
