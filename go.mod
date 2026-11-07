@@ -6,7 +6,7 @@ toolchain go1.27.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/chrj/smtpd/v2 v2.5.1
+	github.com/chrj/smtpd/v2 v2.6.0
 	github.com/prometheus/client_golang v1.25.0
 )
 
